@@ -31,11 +31,13 @@ type Alert struct {
 		Service    string `json:"service"`
 		Severity   string `json:"severity"`
 		Team       string `json:"team"`
+		Container  string `json:"container"`
 	}
 	Annotations struct {
 		AdditionalInfo string `json:"additionalInfo"`
 		Description    string `json:"description"`
 		Summary        string `json:"summary"`
+		RunbookURL     string `json:"runbook_url"`
 	}
 	StartsAt     time.Time `json:"startsAt"`
 	EndsAt       time.Time `json:"endsAt"`
@@ -85,6 +87,7 @@ type WebhookData struct {
 		AdditionalInfo string `json:"additionalInfo"`
 		Description    string `json:"description"`
 		Summary        string `json:"summary"`
+		RunbookURL     string `json:"runbook_url"`
 	}
 	ExternalURL string `json:"externalURL"`
 	Version     string `json:"version"`
@@ -93,8 +96,8 @@ type WebhookData struct {
 
 // 钉钉机器人的 webhook URL 和秘钥
 const (
-	dingTalkWebhook = "https://oapi.dingtalk.com/robot/send?access_token=e47de322a135af2bcd9319ea835d8e218cffded49678809828a81c03195859ce"
-	dingTalkSecret  = "SEC38b4074ec1e45ef3fda5431f3b523ff0ebde536e486c789e49d57a6f0796fae3"
+	dingTalkWebhook = "https://oapi.dingtalk.com/robot/send?access_token=6d2e340ee92d4cba36a125c2101cd0586f44516a6f11770c9eb5742a126d7fa6"
+	dingTalkSecret  = "SEC9888a6963e1bfb3de8e121605a0cefb61c4cb310981a5fb8bf7eeec1b4c3cd5c"
 )
 
 func main() {
@@ -115,7 +118,6 @@ func alertHandler(c *gin.Context) {
 		fmt.Printf("Unmarshal err, %v\n", err)
 		return
 	}
-	fmt.Println(webhookdata)
 	for _, alert := range webhookdata.Alerts {
 		sendMessageToDingTalk(webhookdata, alert) //发送告警
 	}
@@ -188,14 +190,22 @@ func nodeMessage(webhookdata WebhookData, alert Alert) string {
 				message = "### 告警信息\n" +
 					"- **主题**: " + alert.Labels.Alertname + "\n" +
 					"- **实例**: " + alert.Labels.Instance + "\n" +
+					"- **命名空间**: " + alert.Labels.Namespace + "\n" +
+					"- **容器**: " + alert.Labels.Container + "\n" +
 					"- **告警级别**: " + webhookdata.CommonLabels.Severity + "\n" +
 					"- **告警内容**: " + alert.Annotations.Description + "\n" +
-					"- **告警详情**: " + alert.Annotations.Summary + "\n" +
-					"- **开始时间**: " + alert.StartsAt.Format("2006-01-02 15:04:05") + "\n\n"
+					"- **告警详情**: " + alert.Annotations.Summary + "\n"
+				// 仅在 RunbookURL 不为空时添加
+				if runbookURL := alert.Annotations.RunbookURL; runbookURL != "" {
+					message += "- **告警日志**: [查看详情](" + runbookURL + ")\n"
+				}
+				message += "- **开始时间**: " + alert.StartsAt.Format("2006-01-02 15:04:05") + "\n\n"
 			} else if webhookdata.Status == "resolved" {
 				message = "### 恢复信息\n" +
 					"- **主题**: " + alert.Labels.Alertname + "\n" +
 					"- **实例**: " + alert.Labels.Instance + "\n" +
+					"- **命名空间**: " + alert.Labels.Namespace + "\n" +
+					"- **容器**: " + alert.Labels.Container + "\n" +
 					"- **告警级别**: " + webhookdata.CommonLabels.Severity + "\n" +
 					"- **告警内容**: " + alert.Annotations.Description + "\n" +
 					"- **告警详情**: " + alert.Annotations.Summary + "\n" +
