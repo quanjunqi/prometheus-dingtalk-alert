@@ -94,10 +94,25 @@ type WebhookData struct {
 	GroupKey    string `json:"groupKey"`
 }
 
+// Prometheus响应结构
+type PrometheusResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Metric struct {
+				Instance string `json:"instance"`
+			} `json:"metric"`
+			Value []json.RawMessage `json:"value"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
 // 钉钉机器人的 webhook URL 和秘钥
 const (
 	dingTalkWebhook = "https://oapi.dingtalk.com/robot/send?access_token=6d2e340ee92d4cba36a125c2101cd0586f44516a6f11770c9eb5742a126d7fa6"
 	dingTalkSecret  = "SEC9888a6963e1bfb3de8e121605a0cefb61c4cb310981a5fb8bf7eeec1b4c3cd5c"
+	prometheusURL   = "https://prometheus.io.mlj130.com/api/v1/query"
 )
 
 func main() {
@@ -176,11 +191,12 @@ func nodeMessage(webhookdata WebhookData, alert Alert) string {
 					"- **告警详情**: " + alert.Annotations.Summary + "\n" +
 					"- **开始时间**: " + alert.StartsAt.Format("2006-01-02 15:04:05") + "\n\n"
 			} else if webhookdata.Status == "resolved" {
+				resolved_Text := GetNodeReceiverText(alert.Labels.Instance)
 				message = "### 恢复信息\n" +
 					"- **主题**: " + alert.Labels.Alertname + "\n" +
 					"- **实例**: " + alert.Labels.Instance + "\n" +
 					"- **告警级别**: " + webhookdata.CommonLabels.Severity + "\n" +
-					"- **告警内容**: " + alert.Annotations.Description + "\n" +
+					"- **告警内容**: " + resolved_Text + "\n" +
 					"- **告警详情**: " + alert.Annotations.Summary + "\n" +
 					"- **开始时间**: " + alert.StartsAt.Format("2006-01-02 15:04:05") + "\n" +
 					"- **结束时间**: " + alert.EndsAt.Format("2006-01-02 15:04:05") + "\n\n"
@@ -227,4 +243,83 @@ func generateSign(timestamp int64) string {
 	hmac256 := hmac.New(sha256.New, []byte(dingTalkSecret))
 	hmac256.Write([]byte(stringToSign))
 	return base64.StdEncoding.EncodeToString(hmac256.Sum(nil))
+}
+
+func queryPrometheus(query string) (PrometheusResponse, error) {
+	var resp PrometheusResponse
+
+	// 构建请求
+	req, err := http.NewRequest("GET", prometheusURL, nil)
+	if err != nil {
+		return resp, err
+	}
+
+	// 设置查询参数
+	q := req.URL.Query()
+	q.Add("query", query)
+	req.URL.RawQuery = q.Encode()
+
+	// 发送请求
+	client := &http.Client{}
+	r, err := client.Do(req)
+	if err != nil {
+		return resp, err
+	}
+	defer r.Body.Close()
+
+	// 读取响应
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return resp, err
+	}
+
+	// 解析JSON
+	err = json.Unmarshal(body, &resp)
+	if err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}
+
+func GetNodeReceiverText(instance string) string {
+	var text string
+	// Prometheus的CPU使用率查询
+	query := fmt.Sprintf("(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",instance=\"%s\"}[5m])) by (instance)) * 100", instance)
+	result, err := queryPrometheus(query)
+	if err != nil {
+		fmt.Println(err)
+	}
+	for _, data := range result.Data.Result {
+		// 解析值字符串
+		// var timestamp float64
+		var valueString string
+		var value float64
+
+		// // 解析时间戳
+		// err := json.Unmarshal(data.Value[0], &timestamp)
+		// if err != nil {
+		// 	log.Fatalf("Error parsing timestamp: %s", err)
+		// }
+
+		// // 将Unix时间戳转换为24小时制时间字符串
+		// timeStr := time.Unix(int64(timestamp), 0).Format("15:04:05")
+
+		err = json.Unmarshal(data.Value[1], &valueString)
+		if err != nil {
+			log.Fatalf("Error parsing value string: %s", err)
+		}
+
+		// 将值字符串转换为float64
+		value, err = strconv.ParseFloat(valueString, 64)
+		if err != nil {
+			log.Fatalf("Error converting value to float64: %s", err)
+		}
+
+		// 格式化value为两位小数
+		formattedValue := fmt.Sprintf("%.2f", value)
+		text = fmt.Sprintf("当前使用率为: %s%%", formattedValue)
+	}
+	return text
+
 }
